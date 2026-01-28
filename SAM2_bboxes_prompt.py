@@ -1,7 +1,7 @@
 import cv2
 import numpy as np
 import tkinter as tk
-from tkinter import ttk
+from tkinter import ttk, filedialog
 from PIL import Image, ImageTk
 from ultralytics.models.sam import SAM2VideoPredictor
 
@@ -16,8 +16,21 @@ class SAM2TrackerApp:
         self.drawing = False
         self.current_rect = None
 
+        # 選擇視頻檔案
+        self.video_path = filedialog.askopenfilename(
+            title="選擇視頻檔案",
+            initialdir="./test_data/",
+            filetypes=[
+                ("Video files", "*.mp4 *.avi *.mov *.mkv *.wmv *.flv *.m4v"),
+                ("All files", "*.*")
+            ]
+        )
+
+        if not self.video_path:
+            print("未選擇視頻檔案")
+            return
+
         # 加載視頻和第一幀
-        self.video_path = "./test_data/ex4.mp4"
         self.cap = cv2.VideoCapture(self.video_path)
         success, self.frame_orig = self.cap.read()
 
