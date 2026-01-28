@@ -3,7 +3,7 @@ import numpy as np
 import tkinter as tk
 from tkinter import ttk
 from PIL import Image, ImageTk
-from ultralytics import SAM
+from ultralytics.models.sam import SAM2VideoPredictor
 
 class SAM2TrackerApp:
     def __init__(self, root):
@@ -27,9 +27,15 @@ class SAM2TrackerApp:
 
         self.orig_h, self.orig_w = self.frame_orig.shape[:2]
 
-        # 創建SAM模型 (使用SAM2模型)
-        model = SAM("sam2.1_t.pt")
-        self.predictor = model
+        # 創建SAM2VideoPredictor
+        overrides = dict(
+            conf=0.25,
+            task="segment",
+            mode="predict",
+            imgsz=1024,
+            model="sam2.1_t.pt"
+        )
+        self.predictor = SAM2VideoPredictor(overrides=overrides)
 
         # 設置GUI
         self.setup_gui()
@@ -231,13 +237,26 @@ class SAM2TrackerApp:
             bboxes_for_tracking.append([box[0], box[1], box[2], box[3]])
 
         try:
-            # 使用SAM模型進行視頻追蹤，指定SAM2模型和任務類型
-            results = self.predictor.predict(
-                source=self.video_path,
-                bboxes=bboxes_for_tracking,
-                stream=True,
-                task="segment",
-                imgsz=1024
+            # 使用SAM2VideoPredictor進行視頻追蹤
+            # 初始化追蹤狀態
+            inference_state = self.predictor.init_state(
+                video_path=self.video_path
+            )
+
+            # 添加初始框作為提示
+            _, out_obj_ids, mask_logits = self.predictor.add_new_points_or_box(
+                inference_state=inference_state,
+                frame_idx=0,  # 從第一幀開始
+                obj_ids=[i for i in range(len(bboxes_for_tracking))],  # 為每個框分配物件ID
+                points=None,  # 不使用點提示
+                labels=None,  # 不使用點標籤
+                box=bboxes_for_tracking  # 使用框提示
+            )
+
+            # 開始視頻追蹤
+            results = self.predictor.propagate_in_video(
+                inference_state,
+                start_frame_idx=0
             )
         except Exception as e:
             print(f"初始化追蹤時出錯: {e}")
@@ -263,8 +282,29 @@ class SAM2TrackerApp:
 
         def update_frame():
             try:
-                result = next(results)
-                annotated_frame = result.plot()
+                # 從SAM2VideoPredictor結果中獲取下一幀
+                frame_idx, obj_ids, video_res_masks = next(results)
+
+                # 讀取當前幀
+                self.cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+                ret, frame = self.cap.read()
+
+                if not ret:
+                    raise StopIteration
+
+                # 將mask應用到當前幀
+                # 注意：這裡需要根據SAM2VideoPredictor的輸出來構建帶有分割結果的圖像
+                annotated_frame = frame.copy()
+
+                # 對於每個物件ID，將其mask疊加到圖像上
+                for i, obj_id in enumerate(obj_ids):
+                    mask = video_res_masks[i].cpu().numpy()  # 將mask移到CPU並轉換為numpy
+                    # 將mask應用到圖像上（這裡只是示意，實際實現可能需要更複雜的處理）
+                    mask_uint8 = (mask * 255).astype(np.uint8)
+
+                    # 在圖像上繪製mask邊界
+                    contours, _ = cv2.findContours(mask_uint8, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                    cv2.drawContours(annotated_frame, contours, -1, (0, 255, 0), 2)
 
                 # 轉換BGR到RGB
                 image_rgb = cv2.cvtColor(annotated_frame, cv2.COLOR_BGR2RGB)
