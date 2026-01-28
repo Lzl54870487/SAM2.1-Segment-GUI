@@ -3,7 +3,7 @@ import numpy as np
 import tkinter as tk
 from tkinter import ttk
 from PIL import Image, ImageTk
-from ultralytics import SAM
+from ultralytics.models.sam import SAM2VideoPredictor
 
 class SAM2TrackerApp:
     def __init__(self, root):
@@ -27,9 +27,8 @@ class SAM2TrackerApp:
 
         self.orig_h, self.orig_w = self.frame_orig.shape[:2]
 
-        # 創建SAM模型
-        model = SAM("sam2.1_t.pt")
-        self.predictor = model
+        # 創建SAM2VideoPredictor
+        self.predictor = SAM2VideoPredictor(model="sam2.1_t.pt")
 
         # 設置GUI
         self.setup_gui()
@@ -231,13 +230,12 @@ class SAM2TrackerApp:
             bboxes_for_tracking.append([box[0], box[1], box[2], box[3]])
 
         try:
-            # 使用SAM模型進行視頻追蹤
-            # 根據Ultralytics API，使用predict方法
-            results = self.predictor.predict(
+            # 使用SAM2VideoPredictor進行視頻追蹤
+            # 直接使用predictor對象進行推論
+            results = self.predictor(
                 source=self.video_path,
                 bboxes=bboxes_for_tracking,
-                stream=True,
-                task="segment"
+                stream=True
             )
         except Exception as e:
             print(f"初始化追蹤時出錯: {e}")
