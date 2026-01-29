@@ -15,6 +15,7 @@ class SAM2TrackerApp:
         self.roi_start = None
         self.drawing = False
         self.current_rect = None
+        self.save_video = False  # 是否保存视频的标志
 
         # 選擇影片檔案
         self.video_path = filedialog.askopenfilename(
@@ -51,6 +52,9 @@ class SAM2TrackerApp:
         )
         self.predictor = SAM2VideoPredictor(overrides=overrides)
 
+        # 保存基本配置，以便稍後根據需要創建不同配置的predictor
+        self.base_overrides = overrides
+
         # 設置GUI
         self.setup_gui()
 
@@ -83,6 +87,10 @@ class SAM2TrackerApp:
         # 重置按鈕
         self.reset_btn = ttk.Button(button_frame, text="重置選擇", command=self.reset_selections)
         self.reset_btn.pack(side=tk.LEFT)
+
+        # 保存視頻開關按鈕
+        self.save_video_btn = ttk.Button(button_frame, text="保存視頻: 否", command=self.toggle_save_video)
+        self.save_video_btn.pack(side=tk.RIGHT)
 
         # 顯示初始圖像
         self.display_image(self.frame_orig)
@@ -232,6 +240,12 @@ class SAM2TrackerApp:
         self.prompts = []
         self.display_image(self.frame_orig)
 
+    def toggle_save_video(self):
+        """切換是否保存視頻的狀態"""
+        self.save_video = not self.save_video
+        status_text = "是" if self.save_video else "否"
+        self.save_video_btn.config(text=f"保存視頻: {status_text}")
+
     def start_tracking(self):
         if not self.prompts:
             print("請先選擇至少一個區域")
@@ -250,17 +264,35 @@ class SAM2TrackerApp:
         for box in self.prompts:
             bboxes_for_tracking.append([box[0], box[1], box[2], box[3]])
 
-        try:
-            # 使用SAM2VideoPredictor進行視頻追蹤
-            results = self.predictor(
-                source=self.video_path,
-                bboxes=bboxes_for_tracking,
-                stream=True
-            )
-        except Exception as e:
-            print(f"初始化追蹤時出錯: {e}")
-            self.root.deiconify()  # 重新顯示主窗口
-            return
+        # 根據是否需要保存視頻來創建相應的predictor
+        if self.save_video:
+            # 如果需要保存視頻，創建一個帶有save=True的predictor
+            save_overrides = self.base_overrides.copy()
+            save_overrides['save'] = True
+            temp_predictor = SAM2VideoPredictor(overrides=save_overrides)
+
+            try:
+                results = temp_predictor(
+                    source=self.video_path,
+                    bboxes=bboxes_for_tracking,
+                    stream=True
+                )
+            except Exception as e:
+                print(f"初始化追蹤時出錯: {e}")
+                self.root.deiconify()  # 重新顯示主窗口
+                return
+        else:
+            # 如果不需要保存視頻，使用默認配置的predictor
+            try:
+                results = self.predictor(
+                    source=self.video_path,
+                    bboxes=bboxes_for_tracking,
+                    stream=True
+                )
+            except Exception as e:
+                print(f"初始化追蹤時出錯: {e}")
+                self.root.deiconify()  # 重新顯示主窗口
+                return
 
         # 創建新的窗口顯示追蹤結果
         tracking_window = tk.Toplevel(self.root)
