@@ -1,6 +1,7 @@
-*.pt  
-*.mp4  
-*.mkv  
-*.ts  
-test_data/  
-.vscode/ 
+models/*
+!models/
+*.mp4
+*.mkv
+*.ts
+test_data/
+.vscode/

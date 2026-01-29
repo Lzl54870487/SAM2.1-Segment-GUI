@@ -16,9 +16,9 @@ class SAM2TrackerApp:
         self.drawing = False
         self.current_rect = None
 
-        # 選擇視頻檔案
+        # 選擇影片檔案
         self.video_path = filedialog.askopenfilename(
-            title="選擇視頻檔案",
+            title="選擇影片檔案",
             initialdir="./test_data/",
             filetypes=[
                 ("Video files", "*.mp4 *.avi *.mov *.mkv *.wmv *.flv *.m4v"),
@@ -43,10 +43,11 @@ class SAM2TrackerApp:
         # 創建SAM2VideoPredictor
         overrides = dict(
             conf=0.25,
+            device='cuda',
             task="segment",
             mode="predict",
             imgsz=1024,
-            model="sam2.1_t.pt"
+            model="./models/sam2.1_t.pt"
         )
         self.predictor = SAM2VideoPredictor(overrides=overrides)
 
