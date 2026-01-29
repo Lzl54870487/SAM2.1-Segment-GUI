@@ -284,6 +284,9 @@ class SAM2TrackerApp:
             # 清除臨時矩形
             self.canvas.delete("temp_rect")
 
+            # 重新繪製所有邊界框以更新顏色和標籤
+            self.redraw_existing_boxes()
+
     def reset_selections(self):
         self.prompts = []
         self.display_image(self.frame_orig)
@@ -482,9 +485,23 @@ class SAM2TrackerApp:
 
             try:
                 result = next(results)
-                annotated_frame = result.plot()  # 使用Ultralytics的plot方法直接獲取標註後的幀
 
-                # 在这里叠加类别信息
+                # 获取原始图像
+                original_frame = result.orig_img.copy()
+
+                # 获取分割掩码和边界框
+                masks = result.masks  # 分割掩码
+                boxes = result.boxes  # 边界框
+
+                # 如果有分割结果，绘制分割结果
+                if masks is not None and len(masks) > 0:
+                    # 使用result.plot()方法绘制基础结果
+                    annotated_frame = result.plot()
+                else:
+                    # 如果没有分割结果，使用原图
+                    annotated_frame = original_frame
+
+                # 在这里叠加我们自定义的类别信息
                 # 获取当前帧的尺寸
                 h, w = annotated_frame.shape[:2]
 
