@@ -486,57 +486,8 @@ class SAM2TrackerApp:
             try:
                 result = next(results)
 
-                # 获取原始图像
-                original_frame = result.orig_img.copy()
-
-                # 获取分割掩码和边界框
-                masks = result.masks  # 分割掩码
-                boxes = result.boxes  # 边界框
-
-                # 如果有分割结果，绘制分割结果
-                if masks is not None and len(masks) > 0:
-                    # 使用result.plot()方法绘制基础结果
-                    annotated_frame = result.plot()
-                else:
-                    # 如果没有分割结果，使用原图
-                    annotated_frame = original_frame
-
-                # 在这里叠加我们自定义的类别信息
-                # 获取当前帧的尺寸
-                h, w = annotated_frame.shape[:2]
-
-                # 计算缩放因子，将原始坐标转换为当前帧坐标
-                orig_h, orig_w = self.orig_h, self.orig_w
-                scale_factor_h = h / orig_h
-                scale_factor_w = w / orig_w
-
-                # 在跟踪结果上叠加类别标签
-                for prompt in self.prompts:
-                    bbox = prompt['bbox']
-                    class_name = prompt['class']
-
-                    # 将原始坐标转换为当前帧坐标
-                    x1 = int(bbox[0] * scale_factor_w)
-                    y1 = int(bbox[1] * scale_factor_h)
-                    x2 = int(bbox[2] * scale_factor_w)
-                    y2 = int(bbox[3] * scale_factor_h)
-
-                    # 获取该类别的颜色
-                    color = self.color_map.get(class_name, (255, 0, 0))  # 默认红色
-                    # 将颜色字符串转换为BGR格式
-                    if isinstance(color, str):
-                        color_map_bgr = {
-                            'red': (0, 0, 255), 'blue': (255, 0, 0), 'green': (0, 255, 0),
-                            'yellow': (0, 255, 255), 'magenta': (255, 0, 255), 'cyan': (255, 255, 0),
-                            'orange': (0, 165, 255), 'purple': (128, 0, 128), 'brown': (42, 42, 165),
-                            'pink': (203, 192, 255), 'gray': (128, 128, 128), 'olive': (0, 128, 128),
-                            'maroon': (0, 0, 128), 'teal': (128, 128, 0)
-                        }
-                        color = color_map_bgr.get(color, (0, 0, 255))  # 默认红色
-
-                    # 在图像上绘制类别标签
-                    cv2.putText(annotated_frame, class_name, (x1, y1 - 10),
-                               cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+                # 使用result.plot()方法直接獲取標註後的幀
+                annotated_frame = result.plot()
 
                 # 轉換BGR到RGB
                 image_rgb = cv2.cvtColor(annotated_frame, cv2.COLOR_BGR2RGB)
