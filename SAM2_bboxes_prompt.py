@@ -18,6 +18,8 @@ class SAM2TrackerApp:
         self.save_video = False  # 是否保存视频的标志
         self.classes = ["Object"]  # 类别列表，默认为"Object"
         self.current_class_index = 0  # 当前选择的类别索引
+        self.color_map = {}  # 类别颜色映射
+        self.generate_color_map()  # 生成初始颜色映射
 
         # 選擇影片檔案
         self.video_path = filedialog.askopenfilename(
@@ -117,6 +119,9 @@ class SAM2TrackerApp:
         self.class_dropdown.pack(side=tk.LEFT, padx=(0, 10))
         self.update_class_dropdown()
 
+        # 绑定下拉菜单选择事件
+        self.class_dropdown.bind("<<ComboboxSelected>>", self.on_class_selected)
+
         # 类别命名按钮
         self.rename_class_btn = ttk.Button(class_control_frame, text="重命名类别", command=self.rename_class)
         self.rename_class_btn.pack(side=tk.LEFT)
@@ -179,11 +184,14 @@ class SAM2TrackerApp:
             x2_canvas = x2 / self.scale_x + self.offset_x
             y2_canvas = y2 / self.scale_y + self.offset_y
 
+            # 获取该类别的颜色
+            color = self.color_map.get(class_name, 'red')
+
             self.canvas.create_rectangle(x1_canvas, y1_canvas, x2_canvas, y2_canvas,
-                                        outline='red', width=2)
+                                        outline=color, width=2)
             # 显示类别标签
             self.canvas.create_text(x1_canvas, y1_canvas - 10, text=class_name,
-                                   fill='red', anchor='sw', font=('Arial', 10, 'bold'))
+                                   fill=color, anchor='sw', font=('Arial', 10, 'bold'))
 
     def on_mouse_down(self, event):
         # 轉換canvas座標到原始圖像座標
@@ -286,6 +294,26 @@ class SAM2TrackerApp:
         status_text = "是" if self.save_video else "否"
         self.save_video_btn.config(text=f"保存影片: {status_text}")
 
+    def generate_color_map(self):
+        """生成类别颜色映射"""
+        # 定义一组颜色
+        colors = [
+            'red', 'blue', 'green', 'yellow', 'magenta', 'cyan', 'orange',
+            'purple', 'brown', 'pink', 'gray', 'olive', 'maroon', 'teal'
+        ]
+
+        # 为每个类别分配颜色
+        for i, class_name in enumerate(self.classes):
+            color_idx = i % len(colors)
+            self.color_map[class_name] = colors[color_idx]
+
+    def on_class_selected(self, event=None):
+        """当下拉菜单选择类别时触发"""
+        # 更新当前类别索引
+        selected_class = self.class_var.get()
+        if selected_class in self.classes:
+            self.current_class_index = self.classes.index(selected_class)
+
     def update_class_dropdown(self):
         """更新类别下拉菜单"""
         self.class_dropdown['values'] = self.classes
@@ -303,15 +331,32 @@ class SAM2TrackerApp:
         """添加类别"""
         new_class_name = f"Class_{len(self.classes)+1}"
         self.classes.append(new_class_name)
+        # 为新类别生成颜色
+        self.generate_color_map()
         self.class_count_var.set(str(len(self.classes)))
         self.update_class_dropdown()
 
     def remove_class(self):
-        """删除最后一个类别"""
+        """删除当前选择的类别"""
         if len(self.classes) > 1:  # 至少保留一个类别
-            self.classes.pop()
+            selected_class = self.class_var.get()
+            if not selected_class:
+                import tkinter.messagebox
+                tkinter.messagebox.showwarning("警告", "请选择一个类别进行删除")
+                return
+
+            # 从类别列表中移除
+            if selected_class in self.classes:
+                self.classes.remove(selected_class)
+
+            # 同时移除该类别的所有边界框
+            self.prompts = [prompt for prompt in self.prompts if prompt['class'] != selected_class]
+            # 重新生成颜色映射
+            self.generate_color_map()
             self.class_count_var.set(str(len(self.classes)))
             self.update_class_dropdown()
+            # 重新显示图像以更新显示
+            self.display_image(self.frame_orig)
         else:
             # 如果只有一个类别，可以提示用户不能删除
             import tkinter.messagebox
@@ -344,8 +389,23 @@ class SAM2TrackerApp:
         )
 
         if new_name is not None and new_name.strip():  # 确保输入不为空
+            # 更新类别列表
+            old_name = self.classes[idx]
             self.classes[idx] = new_name.strip()
+
+            # 更新颜色映射
+            color = self.color_map.get(old_name, 'red')  # 保留原来的颜色
+            del self.color_map[old_name]  # 删除旧的映射
+            self.color_map[new_name.strip()] = color  # 添加新的映射
+
+            # 更新所有属于该类别的prompt
+            for prompt in self.prompts:
+                if prompt['class'] == old_name:
+                    prompt['class'] = new_name.strip()
+
             self.update_class_dropdown()
+            # 重新显示图像以更新显示
+            self.display_image(self.frame_orig)
 
     def start_tracking(self):
         if not self.prompts:
@@ -423,6 +483,43 @@ class SAM2TrackerApp:
             try:
                 result = next(results)
                 annotated_frame = result.plot()  # 使用Ultralytics的plot方法直接獲取標註後的幀
+
+                # 在这里叠加类别信息
+                # 获取当前帧的尺寸
+                h, w = annotated_frame.shape[:2]
+
+                # 计算缩放因子，将原始坐标转换为当前帧坐标
+                orig_h, orig_w = self.orig_h, self.orig_w
+                scale_factor_h = h / orig_h
+                scale_factor_w = w / orig_w
+
+                # 在跟踪结果上叠加类别标签
+                for prompt in self.prompts:
+                    bbox = prompt['bbox']
+                    class_name = prompt['class']
+
+                    # 将原始坐标转换为当前帧坐标
+                    x1 = int(bbox[0] * scale_factor_w)
+                    y1 = int(bbox[1] * scale_factor_h)
+                    x2 = int(bbox[2] * scale_factor_w)
+                    y2 = int(bbox[3] * scale_factor_h)
+
+                    # 获取该类别的颜色
+                    color = self.color_map.get(class_name, (255, 0, 0))  # 默认红色
+                    # 将颜色字符串转换为BGR格式
+                    if isinstance(color, str):
+                        color_map_bgr = {
+                            'red': (0, 0, 255), 'blue': (255, 0, 0), 'green': (0, 255, 0),
+                            'yellow': (0, 255, 255), 'magenta': (255, 0, 255), 'cyan': (255, 255, 0),
+                            'orange': (0, 165, 255), 'purple': (128, 0, 128), 'brown': (42, 42, 165),
+                            'pink': (203, 192, 255), 'gray': (128, 128, 128), 'olive': (0, 128, 128),
+                            'maroon': (0, 0, 128), 'teal': (128, 128, 0)
+                        }
+                        color = color_map_bgr.get(color, (0, 0, 255))  # 默认红色
+
+                    # 在图像上绘制类别标签
+                    cv2.putText(annotated_frame, class_name, (x1, y1 - 10),
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
 
                 # 轉換BGR到RGB
                 image_rgb = cv2.cvtColor(annotated_frame, cv2.COLOR_BGR2RGB)
