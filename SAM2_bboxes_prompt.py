@@ -266,9 +266,15 @@ class SAM2TrackerApp:
 
         # 根據是否需要保存視頻來創建相應的predictor
         if self.save_video:
-            # 如果需要保存視頻，創建一個帶有save=True的predictor
+            # 如果需要保存視頻，創建一個帶有save=True和指定保存路徑的predictor
+            import os
+            # 確保輸出路徑存在
+            output_dir = "./output"
+            os.makedirs(output_dir, exist_ok=True)
+
             save_overrides = self.base_overrides.copy()
             save_overrides['save'] = True
+            save_overrides['project'] = output_dir  # 設定保存項目目錄
             temp_predictor = SAM2VideoPredictor(overrides=save_overrides)
 
             try:
