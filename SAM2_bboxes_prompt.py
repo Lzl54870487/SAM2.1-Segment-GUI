@@ -16,6 +16,8 @@ class SAM2TrackerApp:
         self.drawing = False
         self.current_rect = None
         self.save_video = False  # 是否保存视频的标志
+        self.classes = ["Object"]  # 类别列表，默认为"Object"
+        self.current_class_index = 0  # 当前选择的类别索引
 
         # 選擇影片檔案
         self.video_path = filedialog.askopenfilename(
@@ -92,6 +94,33 @@ class SAM2TrackerApp:
         self.save_video_btn = ttk.Button(button_frame, text="保存影片: 否", command=self.toggle_save_video)
         self.save_video_btn.pack(side=tk.RIGHT)
 
+        # 类别控制框架
+        class_control_frame = ttk.Frame(main_frame)
+        class_control_frame.pack(fill=tk.X, pady=(5, 0))
+
+        # 类别数量控制
+        ttk.Label(class_control_frame, text="类别数量:").pack(side=tk.LEFT, padx=(0, 5))
+        self.class_count_var = tk.StringVar(value=str(len(self.classes)))
+        self.class_count_label = ttk.Label(class_control_frame, textvariable=self.class_count_var)
+        self.class_count_label.pack(side=tk.LEFT, padx=(0, 10))
+
+        self.add_class_btn = ttk.Button(class_control_frame, text="+", width=3, command=self.add_class)
+        self.add_class_btn.pack(side=tk.LEFT, padx=(0, 5))
+
+        self.remove_class_btn = ttk.Button(class_control_frame, text="-", width=3, command=self.remove_class)
+        self.remove_class_btn.pack(side=tk.LEFT, padx=(0, 10))
+
+        # 类别选择下拉菜单
+        ttk.Label(class_control_frame, text="当前类别:").pack(side=tk.LEFT, padx=(0, 5))
+        self.class_var = tk.StringVar()
+        self.class_dropdown = ttk.Combobox(class_control_frame, textvariable=self.class_var, state="readonly")
+        self.class_dropdown.pack(side=tk.LEFT, padx=(0, 10))
+        self.update_class_dropdown()
+
+        # 类别命名按钮
+        self.rename_class_btn = ttk.Button(class_control_frame, text="重命名类别", command=self.rename_class)
+        self.rename_class_btn.pack(side=tk.LEFT)
+
         # 顯示初始圖像
         self.display_image(self.frame_orig)
 
@@ -140,7 +169,9 @@ class SAM2TrackerApp:
 
     def redraw_existing_boxes(self):
         # 重新繪製已選擇的框
-        for box in self.prompts:
+        for prompt in self.prompts:
+            box = prompt['bbox']
+            class_name = prompt['class']
             x1, y1, x2, y2 = box
             # 轉換座標到canvas空間
             x1_canvas = x1 / self.scale_x + self.offset_x
@@ -150,6 +181,9 @@ class SAM2TrackerApp:
 
             self.canvas.create_rectangle(x1_canvas, y1_canvas, x2_canvas, y2_canvas,
                                         outline='red', width=2)
+            # 显示类别标签
+            self.canvas.create_text(x1_canvas, y1_canvas - 10, text=class_name,
+                                   fill='red', anchor='sw', font=('Arial', 10, 'bold'))
 
     def on_mouse_down(self, event):
         # 轉換canvas座標到原始圖像座標
@@ -217,8 +251,14 @@ class SAM2TrackerApp:
                     max(self.roi_start[1], y_img)
                 ]
 
-                # 添加到選擇列表
-                self.prompts.append(box)
+                # 获取当前选择的类别
+                current_class = self.class_var.get() if self.class_var.get() else "Unknown"
+
+                # 添加到選擇列表，包含类别信息
+                self.prompts.append({
+                    'bbox': box,
+                    'class': current_class
+                })
 
                 # 轉換座標到canvas空間進行顯示
                 x1_canvas = box[0] / self.scale_x + self.offset_x
@@ -246,6 +286,67 @@ class SAM2TrackerApp:
         status_text = "是" if self.save_video else "否"
         self.save_video_btn.config(text=f"保存影片: {status_text}")
 
+    def update_class_dropdown(self):
+        """更新类别下拉菜单"""
+        self.class_dropdown['values'] = self.classes
+        if self.classes:
+            # 如果当前选择的类别仍然存在，则保持不变，否则选择第一个
+            if self.current_class_index < len(self.classes):
+                self.class_var.set(self.classes[self.current_class_index])
+            else:
+                self.current_class_index = 0
+                self.class_var.set(self.classes[0])
+        else:
+            self.class_var.set("")
+
+    def add_class(self):
+        """添加类别"""
+        new_class_name = f"Class_{len(self.classes)+1}"
+        self.classes.append(new_class_name)
+        self.class_count_var.set(str(len(self.classes)))
+        self.update_class_dropdown()
+
+    def remove_class(self):
+        """删除最后一个类别"""
+        if len(self.classes) > 1:  # 至少保留一个类别
+            self.classes.pop()
+            self.class_count_var.set(str(len(self.classes)))
+            self.update_class_dropdown()
+        else:
+            # 如果只有一个类别，可以提示用户不能删除
+            import tkinter.messagebox
+            tkinter.messagebox.showwarning("警告", "至少需要保留一个类别")
+
+    def rename_class(self):
+        """重命名当前选择的类别"""
+        import tkinter.simpledialog
+
+        # 获取当前选择的类别
+        selected_class = self.class_var.get()
+        if not selected_class:
+            import tkinter.messagebox
+            tkinter.messagebox.showwarning("警告", "请先选择一个类别")
+            return
+
+        # 获取类别在列表中的索引
+        try:
+            idx = self.classes.index(selected_class)
+        except ValueError:
+            import tkinter.messagebox
+            tkinter.messagebox.showerror("错误", "找不到所选类别")
+            return
+
+        # 弹出对话框让用户输入新名称
+        new_name = tkinter.simpledialog.askstring(
+            "重命名类别",
+            f"请输入新的类别名称:",
+            initialvalue=selected_class
+        )
+
+        if new_name is not None and new_name.strip():  # 确保输入不为空
+            self.classes[idx] = new_name.strip()
+            self.update_class_dropdown()
+
     def start_tracking(self):
         if not self.prompts:
             print("請先選擇至少一個區域")
@@ -261,8 +362,8 @@ class SAM2TrackerApp:
 
         # 開始視頻追蹤
         bboxes_for_tracking = []
-        for box in self.prompts:
-            bboxes_for_tracking.append([box[0], box[1], box[2], box[3]])
+        for prompt in self.prompts:
+            bboxes_for_tracking.append(prompt['bbox'])  # 只提取bbox部分
 
         # 創建新的窗口顯示追蹤結果
         tracking_window = tk.Toplevel(self.root)
