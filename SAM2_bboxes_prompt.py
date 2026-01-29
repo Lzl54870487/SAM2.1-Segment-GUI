@@ -486,8 +486,64 @@ class SAM2TrackerApp:
             try:
                 result = next(results)
 
-                # 使用result.plot()方法直接獲取標註後的幀
-                annotated_frame = result.plot()
+                # 使用原始圖像作為基礎
+                annotated_frame = result.orig_img.copy()
+
+                # 獲取分割結果
+                masks = result.masks
+                boxes = result.boxes
+
+                # 如果有分割結果，則繪製
+                if masks is not None:
+                    # 繪製分割掩碼
+                    for i, mask in enumerate(masks):
+                        # 獲取對應的類別索引
+                        if boxes is not None and i < len(boxes):
+                            cls_id = int(boxes[i].cls[0]) if len(boxes[i].cls) > 0 else 0
+
+                            # 使用我們自定義的類別名稱
+                            if i < len(self.prompts):
+                                class_name = self.prompts[i]['class']
+
+                                # 獲取該類別的顏色
+                                color = self.color_map.get(class_name, 'red')
+                                # 將顏色字符串轉換為BGR格式
+                                if isinstance(color, str):
+                                    color_map_bgr = {
+                                        'red': (0, 0, 255), 'blue': (255, 0, 0), 'green': (0, 255, 0),
+                                        'yellow': (0, 255, 255), 'magenta': (255, 0, 255), 'cyan': (255, 255, 0),
+                                        'orange': (0, 165, 255), 'purple': (128, 0, 128), 'brown': (42, 42, 165),
+                                        'pink': (203, 192, 255), 'gray': (128, 128, 128), 'olive': (0, 128, 128),
+                                        'maroon': (0, 0, 128), 'teal': (128, 128, 0)
+                                    }
+                                    color_bgr = color_map_bgr.get(color, (0, 0, 255))  # 默認紅色
+                                else:
+                                    color_bgr = color
+
+                                # 繪製分割掩碼
+                                mask_np = mask.data.cpu().numpy()[0]  # 轉換為numpy數組
+                                mask_uint8 = (mask_np * 255).astype(np.uint8)  # 轉換為uint8格式
+
+                                # 將掩碼應用到圖像上
+                                colored_mask = np.zeros_like(annotated_frame)
+                                colored_mask[:] = color_bgr
+                                masked_region = annotated_frame.copy()
+                                masked_region[mask_np > 0.5] = (
+                                    annotated_frame * 0.5 + colored_mask * 0.5
+                                ).astype(np.uint8)[mask_np > 0.5]
+                                annotated_frame[mask_np > 0.5] = masked_region[mask_np > 0.5]
+
+                                # 繪製邊界框
+                                if boxes is not None and i < len(boxes):
+                                    box = boxes[i].xyxy[0].cpu().numpy()
+                                    x1, y1, x2, y2 = map(int, box)
+
+                                    # 繪製邊界框
+                                    cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), color_bgr, 2)
+
+                                    # 在邊界框上方繪製類別名稱
+                                    cv2.putText(annotated_frame, class_name, (x1, y1 - 10),
+                                               cv2.FONT_HERSHEY_SIMPLEX, 0.6, color_bgr, 2)
 
                 # 轉換BGR到RGB
                 image_rgb = cv2.cvtColor(annotated_frame, cv2.COLOR_BGR2RGB)
