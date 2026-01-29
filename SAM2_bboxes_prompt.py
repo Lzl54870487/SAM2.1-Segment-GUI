@@ -88,8 +88,8 @@ class SAM2TrackerApp:
         self.reset_btn = ttk.Button(button_frame, text="重置選擇", command=self.reset_selections)
         self.reset_btn.pack(side=tk.LEFT)
 
-        # 保存視頻開關按鈕
-        self.save_video_btn = ttk.Button(button_frame, text="保存視頻: 否", command=self.toggle_save_video)
+        # 保存影片開關按鈕
+        self.save_video_btn = ttk.Button(button_frame, text="保存影片: 否", command=self.toggle_save_video)
         self.save_video_btn.pack(side=tk.RIGHT)
 
         # 顯示初始圖像
@@ -241,10 +241,10 @@ class SAM2TrackerApp:
         self.display_image(self.frame_orig)
 
     def toggle_save_video(self):
-        """切換是否保存視頻的狀態"""
+        """切換是否保存影片的狀態"""
         self.save_video = not self.save_video
         status_text = "是" if self.save_video else "否"
-        self.save_video_btn.config(text=f"保存視頻: {status_text}")
+        self.save_video_btn.config(text=f"保存影片: {status_text}")
 
     def start_tracking(self):
         if not self.prompts:
@@ -264,60 +264,61 @@ class SAM2TrackerApp:
         for box in self.prompts:
             bboxes_for_tracking.append([box[0], box[1], box[2], box[3]])
 
-        # 根據是否需要保存視頻來創建相應的predictor
-        if self.save_video:
-            # 如果需要保存視頻，創建一個帶有save=True和指定保存路徑的predictor
-            import os
-            # 確保輸出路徑存在
-            output_dir = "./output"
-            os.makedirs(output_dir, exist_ok=True)
-
-            save_overrides = self.base_overrides.copy()
-            save_overrides['save'] = True
-            save_overrides['project'] = output_dir  # 設定保存項目目錄
-            temp_predictor = SAM2VideoPredictor(overrides=save_overrides)
-
-            try:
-                results = temp_predictor(
-                    source=self.video_path,
-                    bboxes=bboxes_for_tracking,
-                    stream=True
-                )
-            except Exception as e:
-                print(f"初始化追蹤時出錯: {e}")
-                self.root.deiconify()  # 重新顯示主窗口
-                return
-        else:
-            # 如果不需要保存視頻，使用默認配置的predictor
-            try:
-                results = self.predictor(
-                    source=self.video_path,
-                    bboxes=bboxes_for_tracking,
-                    stream=True
-                )
-            except Exception as e:
-                print(f"初始化追蹤時出錯: {e}")
-                self.root.deiconify()  # 重新顯示主窗口
-                return
-
         # 創建新的窗口顯示追蹤結果
         tracking_window = tk.Toplevel(self.root)
         tracking_window.title("SAM2 Video Tracking Results")
         tracking_window.geometry("800x600")
 
-        # 保存對象引用以避免被垃圾回收
-        self.tracking_window = tracking_window
+        # 創建按鈕框架
+        button_frame = ttk.Frame(tracking_window)
+        button_frame.pack(fill=tk.X, pady=(5, 0))
 
-        tracking_canvas = tk.Canvas(self.tracking_window, bg='black')
+        # 停止追蹤按鈕
+        stop_btn = ttk.Button(button_frame, text="停止追蹤", command=lambda: stop_tracking())
+        stop_btn.pack(side=tk.LEFT, padx=5, pady=5)
+
+        tracking_canvas = tk.Canvas(tracking_window, bg='black')
         tracking_canvas.pack(fill=tk.BOTH, expand=True)
 
         # 保存對象引用以避免被垃圾回收
         self.tracking_canvas = tracking_canvas
 
-        # 綁定窗口大小改變事件
-        self.tracking_canvas.bind("<Configure>", lambda e: None)  # 佔位符，實際處理在update_frame中
+        # 追蹤是否停止的標誌
+        self.tracking_stopped = False
+
+        # 創建新的predictor實例以確保每次都能正確開始
+        overrides = self.base_overrides.copy()
+        if self.save_video:
+            import os
+            output_dir = "./output"
+            os.makedirs(output_dir, exist_ok=True)
+            overrides['save'] = True
+            overrides['project'] = output_dir
+
+        fresh_predictor = SAM2VideoPredictor(overrides=overrides)
+
+        try:
+            results = fresh_predictor(
+                source=self.video_path,
+                bboxes=bboxes_for_tracking,
+                stream=True
+            )
+        except Exception as e:
+            print(f"初始化追蹤時出錯: {e}")
+            tracking_window.destroy()
+            self.root.deiconify()  # 重新顯示主窗口
+            return
+
+        def stop_tracking():
+            """停止追蹤並關閉視窗"""
+            self.tracking_stopped = True
+            tracking_window.destroy()
+            self.root.deiconify()  # 重新顯示主窗口
 
         def update_frame():
+            if self.tracking_stopped:
+                return
+
             try:
                 result = next(results)
                 annotated_frame = result.plot()  # 使用Ultralytics的plot方法直接獲取標註後的幀
@@ -326,8 +327,8 @@ class SAM2TrackerApp:
                 image_rgb = cv2.cvtColor(annotated_frame, cv2.COLOR_BGR2RGB)
 
                 # 獲取當前canvas大小
-                canvas_width = self.tracking_canvas.winfo_width()
-                canvas_height = self.tracking_canvas.winfo_height()
+                canvas_width = tracking_canvas.winfo_width()
+                canvas_height = tracking_canvas.winfo_height()
 
                 # 如果canvas尺寸未初始化，使用默認值
                 if canvas_width <= 1 or canvas_height <= 1:
@@ -348,33 +349,37 @@ class SAM2TrackerApp:
                 photo = ImageTk.PhotoImage(pil_image)
 
                 # 在canvas上顯示圖像
-                self.tracking_canvas.delete("all")
-                self.tracking_canvas.create_image(canvas_width//2, canvas_height//2, image=photo, anchor=tk.CENTER)
+                tracking_canvas.delete("all")
+                tracking_canvas.create_image(canvas_width//2, canvas_height//2, image=photo, anchor=tk.CENTER)
 
                 # 保持對photo的引用以避免被垃圾回收
-                self.tracking_canvas.image = photo
+                tracking_canvas.image = photo
 
                 # 繼續下一幀
-                self.tracking_window.after(30, update_frame)  # 大約33fps
+                if not self.tracking_stopped:
+                    tracking_window.after(30, update_frame)  # 大約33fps
 
             except StopIteration:
                 print("視頻播放完畢")
-                self.tracking_window.destroy()
-                self.root.deiconify()  # 重新顯示主窗口
+                if not self.tracking_stopped:
+                    tracking_window.destroy()
+                    self.root.deiconify()  # 重新顯示主窗口
             except Exception as e:
-                print(f"追蹤過程中出錯: {e}")
-                self.tracking_window.destroy()
-                self.root.deiconify()  # 重新顯示主窗口
-
-        # 綁定關閉事件
-        def on_closing():
-            self.tracking_window.destroy()
-            self.root.deiconify()  # 重新顯示主窗口
-
-        self.tracking_window.protocol("WM_DELETE_WINDOW", on_closing)
+                if not self.tracking_stopped:
+                    print(f"追蹤過程中出錯: {e}")
+                    tracking_window.destroy()
+                    self.root.deiconify()  # 重新顯示主窗口
 
         # 開始顯示第一幀
         update_frame()
+
+        # 綁定關閉事件
+        def on_closing():
+            self.tracking_stopped = True
+            tracking_window.destroy()
+            self.root.deiconify()  # 重新顯示主窗口
+
+        tracking_window.protocol("WM_DELETE_WINDOW", on_closing)
 
 
 def main():
