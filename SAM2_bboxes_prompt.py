@@ -27,9 +27,6 @@ class SAM2TrackerApp:
         # 設定配置文件路徑
         self.config_path = "./sam2_config.json"
 
-        # 自動加載配置
-        self.load_config()
-
         # 選擇影片檔案
         self.video_path = filedialog.askopenfilename(
             title="選擇影片檔案",
@@ -70,6 +67,16 @@ class SAM2TrackerApp:
 
         # 設置GUI
         self.setup_gui()
+
+        # 自動加載配置
+        self.load_config()
+
+        # 在加載配置後，初始化當前類別的顏色和透明度值到UI控件
+        if self.classes:
+            # 設置第一個類別為當前選中類別
+            self.class_var.set(self.classes[0])
+            # 更新UI控件以顯示當前類別的顏色和透明度值
+            self.on_class_selected()
 
     def load_config(self):
         """加載配置檔案"""
