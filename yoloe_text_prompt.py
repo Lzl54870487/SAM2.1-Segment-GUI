@@ -1,7 +1,7 @@
 from ultralytics import YOLO
 
 # 1. 載入預訓練的 YOLOE-26n-seg 模型
-model = YOLO("./models/yoloe-26n-seg.pt")
+model = YOLO("./models/yoloe-26x-seg.pt")
 #model = YOLO("./models/yoloe-26n-seg-pf.pt")
 
 # 2. 定義想要偵測的類別（Text Prompts）
@@ -13,4 +13,4 @@ names = ["person"]
 model.set_classes(names, model.get_text_pe(names))
 
 # 4. 執行推論
-results = model.track("./test_data/雨天無作物.mp4", show=True, save=True, conf=0.6)
+results = model.track("./test_data/ex4.avi", show=True, save=True, conf=0.6)

@@ -5,7 +5,7 @@ from ultralytics.models.yolo.yoloe import YOLOEVPSegPredictor
 
 # 1. 初始化模型與讀取影片首幀
 model = YOLO("./models/yoloe-26n-seg.pt")
-video_path = "./test_data/big.mp4"
+video_path = "./test_data/WIN_20250911_18_14_48_Pro.mp4"
 cap = cv2.VideoCapture(video_path)
 success, frame = cap.read()
 if not success:

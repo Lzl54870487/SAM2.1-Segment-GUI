@@ -4,6 +4,8 @@ import tkinter as tk
 from tkinter import ttk, filedialog
 from PIL import Image, ImageTk
 from ultralytics.models.sam import SAM2VideoPredictor
+import json
+import os
 
 class SAM2TrackerApp:
     def __init__(self, root):
@@ -15,11 +17,18 @@ class SAM2TrackerApp:
         self.roi_start = None
         self.drawing = False
         self.current_rect = None
-        self.save_video = False  # 是否保存视频的标志
-        self.classes = ["Object"]  # 类别列表，默认为"Object"
-        self.current_class_index = 0  # 当前选择的类别索引
-        self.color_map = {}  # 类别颜色映射
-        self.generate_color_map()  # 生成初始颜色映射
+        self.save_video = False  # 是否儲存視頻的標誌
+        self.classes = ["Object"]  # 類別列表，默認為"Object"
+        self.current_class_index = 0  # 當前選擇的類別索引
+        self.color_map = {}  # 類別顏色映射 (存儲(R, G, B, Alpha)元組)
+        self.alpha_map = {}  # 類別透明度映射
+        self.generate_color_map()  # 生成初始顏色映射
+
+        # 設定配置文件路徑
+        self.config_path = "./sam2_config.json"
+
+        # 自動加載配置
+        self.load_config()
 
         # 選擇影片檔案
         self.video_path = filedialog.askopenfilename(
@@ -40,7 +49,7 @@ class SAM2TrackerApp:
         success, self.frame_orig = self.cap.read()
 
         if not success:
-            print("無法讀取視頻文件")
+            print("無法讀取視頻檔案")
             return
 
         self.orig_h, self.orig_w = self.frame_orig.shape[:2]
@@ -62,14 +71,49 @@ class SAM2TrackerApp:
         # 設置GUI
         self.setup_gui()
 
+    def load_config(self):
+        """加載配置檔案"""
+        if os.path.exists(self.config_path):
+            try:
+                with open(self.config_path, 'r', encoding='utf-8') as f:
+                    config = json.load(f)
+
+                # 加載類別設置
+                if 'classes' in config:
+                    self.classes = config['classes']
+
+                # 加載顏色映射
+                if 'color_map' in config:
+                    # 將字串鍵轉換為元組值
+                    self.color_map = {}
+                    for class_name, color_list in config['color_map'].items():
+                        if isinstance(color_list, list) and len(color_list) == 3:
+                            self.color_map[class_name] = tuple(color_list)
+
+                # 加載透明度映射
+                if 'alpha_map' in config:
+                    self.alpha_map = config['alpha_map']
+
+                print(f"配置已加載: {self.config_path}")
+
+            except Exception as e:
+                print(f"加載配置檔案時出錯: {e}")
+                # 如果加載失敗，使用預設設置
+                self.classes = ["Object"]
+                self.generate_color_map()
+        else:
+            # 如果配置檔案不存在，初始化預設設置
+            self.classes = ["Object"]
+            self.generate_color_map()
+
     def setup_gui(self):
         # 主容器
         main_frame = ttk.Frame(self.root)
         main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
 
-        # 圖像顯示區域
+        # 上半部分：圖像顯示區域
         self.canvas = tk.Canvas(main_frame, bg='black')
-        self.canvas.pack(fill=tk.BOTH, expand=True)
+        self.canvas.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
 
         # 綁定鼠標事件
         self.canvas.bind("<Button-1>", self.on_mouse_down)
@@ -80,28 +124,48 @@ class SAM2TrackerApp:
         # 綁定窗口大小改變事件
         self.canvas.bind("<Configure>", self.on_canvas_resize)
 
-        # 按鈕框架
-        button_frame = ttk.Frame(main_frame)
-        button_frame.pack(fill=tk.X, pady=(10, 0))
+        # 中間部分：中央執行按鈕
+        center_button_frame = ttk.Frame(main_frame)
+        center_button_frame.pack(fill=tk.X, pady=(0, 10))
 
-        # 完成選擇按鈕
-        self.finish_btn = ttk.Button(button_frame, text="完成選擇並開始追蹤", command=self.start_tracking)
-        self.finish_btn.pack(side=tk.LEFT, padx=(0, 10))
+        # 配置按鈕樣式
+        style = ttk.Style()
+        style.configure("Large.TButton", font=("TkDefaultFont", 12, "bold"))
+
+        # 完成選擇按鈕（加大並置中）
+        self.finish_btn = ttk.Button(center_button_frame, text="完成選擇並開始追蹤", command=self.start_tracking, style="Large.TButton")
+        self.finish_btn.pack(side=tk.TOP, pady=5)
+
+        # 下半部分：控制面板
+        control_panel = ttk.Frame(main_frame)
+        control_panel.pack(fill=tk.X, pady=(0, 5))
+
+        # 左側控制區域
+        left_control_frame = ttk.Frame(control_panel)
+        left_control_frame.pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+        # 按鈕框架
+        button_frame = ttk.Frame(left_control_frame)
+        button_frame.pack(fill=tk.X, pady=(0, 5))
+
+        # 重新選擇檔案按鈕
+        self.reselect_btn = ttk.Button(button_frame, text="重新選擇檔案", command=self.reselect_video)
+        self.reselect_btn.pack(side=tk.LEFT, padx=(0, 10))
 
         # 重置按鈕
         self.reset_btn = ttk.Button(button_frame, text="重置選擇", command=self.reset_selections)
-        self.reset_btn.pack(side=tk.LEFT)
+        self.reset_btn.pack(side=tk.LEFT, padx=(0, 10))
 
-        # 保存影片開關按鈕
-        self.save_video_btn = ttk.Button(button_frame, text="保存影片: 否", command=self.toggle_save_video)
-        self.save_video_btn.pack(side=tk.RIGHT)
+        # 儲存影片開關按鈕
+        self.save_video_btn = ttk.Button(button_frame, text="儲存影片: 否", command=self.toggle_save_video)
+        self.save_video_btn.pack(side=tk.LEFT)
 
-        # 类别控制框架
-        class_control_frame = ttk.Frame(main_frame)
+        # 類別控制框架
+        class_control_frame = ttk.Frame(left_control_frame)
         class_control_frame.pack(fill=tk.X, pady=(5, 0))
 
-        # 类别数量控制
-        ttk.Label(class_control_frame, text="类别数量:").pack(side=tk.LEFT, padx=(0, 5))
+        # 類別數量控制
+        ttk.Label(class_control_frame, text="類別數量:").pack(side=tk.LEFT, padx=(0, 5))
         self.class_count_var = tk.StringVar(value=str(len(self.classes)))
         self.class_count_label = ttk.Label(class_control_frame, textvariable=self.class_count_var)
         self.class_count_label.pack(side=tk.LEFT, padx=(0, 10))
@@ -112,19 +176,69 @@ class SAM2TrackerApp:
         self.remove_class_btn = ttk.Button(class_control_frame, text="-", width=3, command=self.remove_class)
         self.remove_class_btn.pack(side=tk.LEFT, padx=(0, 10))
 
-        # 类别选择下拉菜单
-        ttk.Label(class_control_frame, text="当前类别:").pack(side=tk.LEFT, padx=(0, 5))
+        # 類別選擇下拉選單
+        ttk.Label(class_control_frame, text="當前類別:").pack(side=tk.LEFT, padx=(0, 5))
         self.class_var = tk.StringVar()
         self.class_dropdown = ttk.Combobox(class_control_frame, textvariable=self.class_var, state="readonly")
         self.class_dropdown.pack(side=tk.LEFT, padx=(0, 10))
         self.update_class_dropdown()
 
-        # 绑定下拉菜单选择事件
+        # 綁定下拉選單選擇事件
         self.class_dropdown.bind("<<ComboboxSelected>>", self.on_class_selected)
 
-        # 类别命名按钮
-        self.rename_class_btn = ttk.Button(class_control_frame, text="重命名类别", command=self.rename_class)
+        # 類別命名按鈕
+        self.rename_class_btn = ttk.Button(class_control_frame, text="重命名類別", command=self.rename_class)
         self.rename_class_btn.pack(side=tk.LEFT)
+
+        # 右側控制區域 - RGB顏色選擇
+        right_control_frame = ttk.Frame(control_panel)
+        right_control_frame.pack(side=tk.RIGHT, fill=tk.Y)
+
+        # RGB顏色選擇框架
+        rgb_control_frame = ttk.Frame(right_control_frame)
+        rgb_control_frame.pack(fill=tk.Y, pady=(0, 0), padx=(10, 0))
+
+        # RGB顏色選擇標籤
+        ttk.Label(rgb_control_frame, text="類別顏色設置 (RGB):").pack(side=tk.TOP, padx=(0, 5), pady=(0, 5))
+
+        # R/G/B值輸入框架
+        rgb_input_frame = ttk.Frame(rgb_control_frame)
+        rgb_input_frame.pack(side=tk.TOP, fill=tk.X)
+
+        # R值輸入
+        ttk.Label(rgb_input_frame, text="R:").pack(side=tk.LEFT, padx=(5, 0))
+        self.r_var = tk.StringVar(value="255")
+        self.r_entry = ttk.Entry(rgb_input_frame, textvariable=self.r_var, width=5)
+        self.r_entry.pack(side=tk.LEFT, padx=(0, 5))
+
+        # G值輸入
+        ttk.Label(rgb_input_frame, text="G:").pack(side=tk.LEFT)
+        self.g_var = tk.StringVar(value="0")
+        self.g_entry = ttk.Entry(rgb_input_frame, textvariable=self.g_var, width=5)
+        self.g_entry.pack(side=tk.LEFT, padx=(0, 5))
+
+        # B值輸入
+        ttk.Label(rgb_input_frame, text="B:").pack(side=tk.LEFT)
+        self.b_var = tk.StringVar(value="0")
+        self.b_entry = ttk.Entry(rgb_input_frame, textvariable=self.b_var, width=5)
+        self.b_entry.pack(side=tk.LEFT, padx=(0, 5))
+
+        # 透明度輸入框架
+        alpha_input_frame = ttk.Frame(rgb_control_frame)
+        alpha_input_frame.pack(side=tk.TOP, fill=tk.X, pady=(5, 0))
+
+        # 透明度標籤
+        ttk.Label(alpha_input_frame, text="Alpha:").pack(side=tk.LEFT, padx=(5, 0))
+        self.alpha_var = tk.StringVar(value="0.5")
+        self.alpha_entry = ttk.Entry(alpha_input_frame, textvariable=self.alpha_var, width=5)
+        self.alpha_entry.pack(side=tk.LEFT, padx=(0, 5))
+
+        # 透明度範圍提示
+        ttk.Label(alpha_input_frame, text="(0-1.0)").pack(side=tk.LEFT)
+
+        # 設置顏色按鈕
+        self.set_color_btn = ttk.Button(rgb_control_frame, text="設置顏色", command=self.set_class_color)
+        self.set_color_btn.pack(side=tk.TOP, padx=(0, 0), pady=(5, 0))
 
         # 顯示初始圖像
         self.display_image(self.frame_orig)
@@ -185,13 +299,18 @@ class SAM2TrackerApp:
             y2_canvas = y2 / self.scale_y + self.offset_y
 
             # 获取该类别的颜色
-            color = self.color_map.get(class_name, 'red')
+            color = self.color_map.get(class_name, (255, 0, 0))  # 默认红色 (RGB)
+            # 将RGB元组转换为十六进制颜色字符串用于tkinter
+            if isinstance(color, tuple) and len(color) == 3:
+                hex_color = '#%02x%02x%02x' % color
+            else:
+                hex_color = '#FF0000'  # 默认红色
 
             self.canvas.create_rectangle(x1_canvas, y1_canvas, x2_canvas, y2_canvas,
-                                        outline=color, width=2)
+                                        outline=hex_color, width=2)
             # 显示类别标签
             self.canvas.create_text(x1_canvas, y1_canvas - 10, text=class_name,
-                                   fill=color, anchor='sw', font=('Arial', 10, 'bold'))
+                                   fill=hex_color, anchor='sw', font=('Arial', 10, 'bold'))
 
     def on_mouse_down(self, event):
         # 轉換canvas座標到原始圖像座標
@@ -291,31 +410,102 @@ class SAM2TrackerApp:
         self.prompts = []
         self.display_image(self.frame_orig)
 
+    def reselect_video(self):
+        """重新選擇視頻檔案"""
+        # 選擇新的影片檔案
+        new_video_path = filedialog.askopenfilename(
+            title="選擇影片檔案",
+            initialdir="./test_data/",
+            filetypes=[
+                ("Video files", "*.mp4 *.avi *.mov *.mkv *.wmv *.flv *.m4v"),
+                ("All files", "*.*")
+            ]
+        )
+
+        if not new_video_path:
+            print("未選擇新的視頻檔案")
+            return
+
+        # 更新視頻路徑
+        self.video_path = new_video_path
+
+        # 重新加載視頻和第一幀
+        self.cap.release()  # 釋放當前視頻捕獲對象
+        self.cap = cv2.VideoCapture(self.video_path)
+        success, self.frame_orig = self.cap.read()
+
+        if not success:
+            print("無法讀取新的視頻檔案")
+            return
+
+        self.orig_h, self.orig_w = self.frame_orig.shape[:2]
+
+        # 重置所有選擇和狀態
+        self.prompts = []
+        self.roi_start = None
+        self.drawing = False
+        self.current_rect = None
+
+        # 重新顯示初始圖像
+        self.display_image(self.frame_orig)
+        print(f"已更換視頻檔案: {self.video_path}")
+
     def toggle_save_video(self):
-        """切換是否保存影片的狀態"""
+        """切換是否儲存影片的狀態"""
         self.save_video = not self.save_video
         status_text = "是" if self.save_video else "否"
-        self.save_video_btn.config(text=f"保存影片: {status_text}")
+        self.save_video_btn.config(text=f"儲存影片: {status_text}")
 
     def generate_color_map(self):
-        """生成类别颜色映射"""
-        # 定义一组颜色
-        colors = [
-            'red', 'blue', 'green', 'yellow', 'magenta', 'cyan', 'orange',
-            'purple', 'brown', 'pink', 'gray', 'olive', 'maroon', 'teal'
+        """生成類別顏色映射"""
+        # 定義一組預設的RGB顏色
+        default_colors = [
+            (255, 0, 0),     # red
+            (0, 255, 0),     # green
+            (0, 0, 255),     # blue
+            (255, 255, 0),   # yellow
+            (255, 0, 255),   # magenta
+            (0, 255, 255),   # cyan
+            (255, 165, 0),   # orange
+            (128, 0, 128),   # purple
+            (42, 42, 165),   # brown
+            (203, 192, 255), # pink
+            (128, 128, 128), # gray
+            (0, 128, 128),   # olive
+            (0, 0, 128),     # maroon
+            (128, 128, 0)    # teal
         ]
 
-        # 为每个类别分配颜色
+        # 為每個類別分配顏色和透明度，如果沒有定義則使用預設顏色和預設透明度
         for i, class_name in enumerate(self.classes):
-            color_idx = i % len(colors)
-            self.color_map[class_name] = colors[color_idx]
+            if class_name not in self.color_map:
+                color_idx = i % len(default_colors)
+                self.color_map[class_name] = default_colors[color_idx]
+
+            # 為每個類別設置預設透明度
+            if class_name not in self.alpha_map:
+                self.alpha_map[class_name] = 0.5  # 預設透明度為0.5
 
     def on_class_selected(self, event=None):
-        """当下拉菜单选择类别时触发"""
-        # 更新当前类别索引
+        """當下拉選單選擇類別時觸發"""
+        # 更新當前類別索引
         selected_class = self.class_var.get()
         if selected_class in self.classes:
             self.current_class_index = self.classes.index(selected_class)
+
+        # 更新RGB輸入框以顯示當前類別的顏色
+        if selected_class in self.color_map:
+            color = self.color_map[selected_class]
+            if isinstance(color, tuple) and len(color) == 3:
+                r, g, b = color
+                self.r_var.set(str(r))
+                self.g_var.set(str(g))
+                self.b_var.set(str(b))
+
+        # 更新Alpha輸入框以顯示當前類別的透明度
+        if selected_class in self.alpha_map:
+            alpha = self.alpha_map[selected_class]
+            self.alpha_var.set(str(alpha))
 
     def update_class_dropdown(self):
         """更新类别下拉菜单"""
@@ -331,83 +521,158 @@ class SAM2TrackerApp:
             self.class_var.set("")
 
     def add_class(self):
-        """添加类别"""
+        """添加類別"""
         new_class_name = f"Class_{len(self.classes)+1}"
         self.classes.append(new_class_name)
-        # 为新类别生成颜色
+        # 為新類別生成顏色和透明度
         self.generate_color_map()
         self.class_count_var.set(str(len(self.classes)))
         self.update_class_dropdown()
 
+        # 自動選擇新添加的類別並更新RGB和透明度輸入框
+        self.class_var.set(new_class_name)
+        self.on_class_selected()
+
     def remove_class(self):
-        """删除当前选择的类别"""
-        if len(self.classes) > 1:  # 至少保留一个类别
+        """刪除當前選擇的類別"""
+        if len(self.classes) > 1:  # 至少保留一個類別
             selected_class = self.class_var.get()
             if not selected_class:
                 import tkinter.messagebox
-                tkinter.messagebox.showwarning("警告", "请选择一个类别进行删除")
+                tkinter.messagebox.showwarning("警告", "請選擇一個類別進行刪除")
                 return
 
-            # 从类别列表中移除
+            # 從類別列表中移除
             if selected_class in self.classes:
                 self.classes.remove(selected_class)
 
-            # 同时移除该类别的所有边界框
+            # 同時移除該類別的所有邊界框
             self.prompts = [prompt for prompt in self.prompts if prompt['class'] != selected_class]
-            # 重新生成颜色映射
+            # 移除該類別的顏色和透明度映射
+            if selected_class in self.color_map:
+                del self.color_map[selected_class]
+            if selected_class in self.alpha_map:
+                del self.alpha_map[selected_class]
+            # 重新生成顏色映射
             self.generate_color_map()
             self.class_count_var.set(str(len(self.classes)))
             self.update_class_dropdown()
-            # 重新显示图像以更新显示
+            # 重新顯示圖像以更新顯示
             self.display_image(self.frame_orig)
         else:
-            # 如果只有一个类别，可以提示用户不能删除
+            # 如果只有一個類別，可以提示用戶不能刪除
             import tkinter.messagebox
-            tkinter.messagebox.showwarning("警告", "至少需要保留一个类别")
+            tkinter.messagebox.showwarning("警告", "至少需要保留一個類別")
 
-    def rename_class(self):
-        """重命名当前选择的类别"""
-        import tkinter.simpledialog
-
-        # 获取当前选择的类别
+    def set_class_color(self):
+        """設置當前選擇類別的顏色"""
         selected_class = self.class_var.get()
         if not selected_class:
             import tkinter.messagebox
-            tkinter.messagebox.showwarning("警告", "请先选择一个类别")
+            tkinter.messagebox.showwarning("警告", "請先選擇一個類別")
             return
 
-        # 获取类别在列表中的索引
+        try:
+            # 獲取RGB值
+            r = int(self.r_var.get())
+            g = int(self.g_var.get())
+            b = int(self.b_var.get())
+
+            # 驗證RGB值範圍
+            if not (0 <= r <= 255 and 0 <= g <= 255 and 0 <= b <= 255):
+                import tkinter.messagebox
+                tkinter.messagebox.showerror("錯誤", "RGB值必須在0-255之間")
+                return
+
+            # 獲取透明度值
+            alpha = float(self.alpha_var.get())
+
+            # 驗證透明度範圍
+            if not (0.0 <= alpha <= 1.0):
+                import tkinter.messagebox
+                tkinter.messagebox.showerror("錯誤", "透明度值必須在0.0-1.0之間")
+                return
+
+            # 更新顏色映射
+            self.color_map[selected_class] = (r, g, b)
+            # 更新透明度映射
+            self.alpha_map[selected_class] = alpha
+
+            print(f"類別 '{selected_class}' 的顏色已設置為 RGB({r}, {g}, {b}), 透明度: {alpha}")
+
+            # 立即刷新顯示，更新所有相同類別的框的顏色
+            self.display_image(self.frame_orig)
+
+            # 立即儲存配置
+            self.save_config()
+
+        except ValueError:
+            import tkinter.messagebox
+            tkinter.messagebox.showerror("錯誤", "請輸入有效的數字")
+
+    def save_config(self):
+        """儲存配置檔案"""
+        try:
+            config = {
+                'classes': self.classes,
+                'color_map': {class_name: list(color) for class_name, color in self.color_map.items()},
+                'alpha_map': self.alpha_map
+            }
+
+            with open(self.config_path, 'w', encoding='utf-8') as f:
+                json.dump(config, f, ensure_ascii=False, indent=2)
+
+            print(f"配置已儲存: {self.config_path}")
+
+        except Exception as e:
+            print(f"儲存配置檔案時出錯: {e}")
+
+    def rename_class(self):
+        """重命名當前選擇的類別"""
+        import tkinter.simpledialog
+
+        # 獲取當前選擇的類別
+        selected_class = self.class_var.get()
+        if not selected_class:
+            import tkinter.messagebox
+            tkinter.messagebox.showwarning("警告", "請先選擇一個類別")
+            return
+
+        # 獲取類別在列表中的索引
         try:
             idx = self.classes.index(selected_class)
         except ValueError:
             import tkinter.messagebox
-            tkinter.messagebox.showerror("错误", "找不到所选类别")
+            tkinter.messagebox.showerror("錯誤", "找不到所選類別")
             return
 
-        # 弹出对话框让用户输入新名称
+        # 彈出對話框讓用戶輸入新名稱
         new_name = tkinter.simpledialog.askstring(
-            "重命名类别",
-            f"请输入新的类别名称:",
+            "重命名類別",
+            f"請輸入新的類別名稱:",
             initialvalue=selected_class
         )
 
-        if new_name is not None and new_name.strip():  # 确保输入不为空
-            # 更新类别列表
+        if new_name is not None and new_name.strip():  # 確保輸入不為空
+            # 更新類別列表
             old_name = self.classes[idx]
             self.classes[idx] = new_name.strip()
 
-            # 更新颜色映射
-            color = self.color_map.get(old_name, 'red')  # 保留原来的颜色
-            del self.color_map[old_name]  # 删除旧的映射
-            self.color_map[new_name.strip()] = color  # 添加新的映射
+            # 更新顏色映射
+            color = self.color_map.get(old_name, (255, 0, 0))  # 保留原來的顏色
+            alpha = self.alpha_map.get(old_name, 0.5)  # 保留原來的透明度
+            del self.color_map[old_name]  # 刪除舊的映射
+            del self.alpha_map[old_name]  # 刪除舊的透明度映射
+            self.color_map[new_name.strip()] = color  # 添加新的顏色映射
+            self.alpha_map[new_name.strip()] = alpha  # 添加新的透明度映射
 
-            # 更新所有属于该类别的prompt
+            # 更新所有屬於該類別的prompt
             for prompt in self.prompts:
                 if prompt['class'] == old_name:
                     prompt['class'] = new_name.strip()
 
             self.update_class_dropdown()
-            # 重新显示图像以更新显示
+            # 重新顯示圖像以更新顯示
             self.display_image(self.frame_orig)
 
     def start_tracking(self):
@@ -450,14 +715,39 @@ class SAM2TrackerApp:
         # 追蹤是否停止的標誌
         self.tracking_stopped = False
 
-        # 創建新的predictor實例以確保每次都能正確開始
-        overrides = self.base_overrides.copy()
+        # 視頻寫入器初始化
+        video_writer = None
+        self.output_path = None  # 存儲輸出路徑以便在其他函數中訪問
         if self.save_video:
             import os
             output_dir = "./output"
             os.makedirs(output_dir, exist_ok=True)
-            overrides['save'] = True
-            overrides['project'] = output_dir
+
+            # 獲取視頻的基本信息
+            cap_info = cv2.VideoCapture(self.video_path)
+            fps = int(cap_info.get(cv2.CAP_PROP_FPS))
+            width = int(cap_info.get(cv2.CAP_PROP_FRAME_WIDTH))
+            height = int(cap_info.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            cap_info.release()
+
+            # 生成輸出視頻路徑
+            import time
+            timestamp = time.strftime("%Y%m%d_%H%M%S")
+            self.output_path = os.path.join(output_dir, f"tracking_result_{timestamp}.mp4")
+
+            # 初始化視頻寫入器
+            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+            video_writer = cv2.VideoWriter(self.output_path, fourcc, fps, (width, height))
+
+            print(f"開始儲存視頻到: {self.output_path}")
+
+        # 創建新的predictor實例以確保每次都能正確開始
+        overrides = self.base_overrides.copy()
+        # 移除原本的儲存設置，因為我們將手動處理
+        if 'save' in overrides:
+            del overrides['save']
+        if 'project' in overrides:
+            del overrides['project']
 
         fresh_predictor = SAM2VideoPredictor(overrides=overrides)
 
@@ -470,14 +760,21 @@ class SAM2TrackerApp:
         except Exception as e:
             print(f"初始化追蹤時出錯: {e}")
             tracking_window.destroy()
-            self.root.deiconify()  # 重新顯示主窗口
+            self.root.deiconify()  # 重新顯示主視窗
             return
 
         def stop_tracking():
             """停止追蹤並關閉視窗"""
             self.tracking_stopped = True
+            # 釋放視頻寫入器
+            if video_writer is not None:
+                video_writer.release()
+                if self.output_path:
+                    print(f"視頻已儲存完成: {self.output_path}")
+                else:
+                    print("視頻已儲存完成")
             tracking_window.destroy()
-            self.root.deiconify()  # 重新顯示主窗口
+            self.root.deiconify()  # 重新顯示主視窗
 
         def update_frame():
             if self.tracking_stopped:
@@ -506,44 +803,48 @@ class SAM2TrackerApp:
                                 class_name = self.prompts[i]['class']
 
                                 # 獲取該類別的顏色
-                                color = self.color_map.get(class_name, 'red')
-                                # 將顏色字符串轉換為BGR格式
-                                if isinstance(color, str):
-                                    color_map_bgr = {
-                                        'red': (0, 0, 255), 'blue': (255, 0, 0), 'green': (0, 255, 0),
-                                        'yellow': (0, 255, 255), 'magenta': (255, 0, 255), 'cyan': (255, 255, 0),
-                                        'orange': (0, 165, 255), 'purple': (128, 0, 128), 'brown': (42, 42, 165),
-                                        'pink': (203, 192, 255), 'gray': (128, 128, 128), 'olive': (0, 128, 128),
-                                        'maroon': (0, 0, 128), 'teal': (128, 128, 0)
-                                    }
-                                    color_bgr = color_map_bgr.get(color, (0, 0, 255))  # 默認紅色
+                                color = self.color_map.get(class_name, (255, 0, 0))  # 默認為紅色 (BGR)
+                                # 直接使用RGB元組，轉換為BGR格式 (OpenCV使用BGR順序)
+                                if isinstance(color, tuple) and len(color) == 3:
+                                    # 將RGB轉換為BGR (r,g,b -> b,g,r)
+                                    color_bgr = (color[2], color[1], color[0])
                                 else:
-                                    color_bgr = color
+                                    color_bgr = (0, 0, 255)  # 默認為紅色 (BGR)
+
+                                # 獲取該類別的透明度
+                                alpha = self.alpha_map.get(class_name, 0.5)  # 默認透明度為0.5
 
                                 # 繪製分割掩碼
                                 mask_np = mask.data.cpu().numpy()[0]  # 轉換為numpy數組
                                 mask_uint8 = (mask_np * 255).astype(np.uint8)  # 轉換為uint8格式
 
-                                # 將掩碼應用到圖像上
+                                # 將掩碼應用到圖像上，使用指定的透明度
                                 colored_mask = np.zeros_like(annotated_frame)
                                 colored_mask[:] = color_bgr
-                                masked_region = annotated_frame.copy()
-                                masked_region[mask_np > 0.5] = (
-                                    annotated_frame * 0.5 + colored_mask * 0.5
-                                ).astype(np.uint8)[mask_np > 0.5]
-                                annotated_frame[mask_np > 0.5] = masked_region[mask_np > 0.5]
 
-                                # 繪製邊界框
-                                if boxes is not None and i < len(boxes):
-                                    box = boxes[i].xyxy[0].cpu().numpy()
-                                    x1, y1, x2, y2 = map(int, box)
+                                # 應用透明度混合
+                                mask_binary = mask_np > 0.5
+                                annotated_frame[mask_binary] = (
+                                    annotated_frame[mask_binary] * (1 - alpha) +
+                                    colored_mask[mask_binary] * alpha
+                                ).astype(np.uint8)
 
-                                    # 繪製邊界框
-                                    cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), color_bgr, 2)
+                                # 可選：繪製邊界框（根據需求決定是否顯示）
+                                # 如果只需要顯示mask而不顯示邊界框，可以註釋掉下面的代碼
+                                # if boxes is not None and i < len(boxes):
+                                #     box = boxes[i].xyxy[0].cpu().numpy()
+                                #     x1, y1, x2, y2 = map(int, box)
 
-                                    # 在邊界框上方繪製類別名稱
-                                    cv2.putText(annotated_frame, class_name, (x1, y1 - 10),
-                                               cv2.FONT_HERSHEY_SIMPLEX, 0.6, color_bgr, 2)
+                                #     # 繪製邊界框
+                                #     cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), color_bgr, 2)
+
+                                #     # 在邊界框上方繪製類別名稱
+                                #     cv2.putText(annotated_frame, class_name, (x1, y1 - 10),
+                                #                cv2.FONT_HERSHEY_SIMPLEX, 0.6, color_bgr, 2)
+
+                # 如果需要保存視頻，將當前幀寫入視頻文件
+                if video_writer is not None:
+                    video_writer.write(annotated_frame)
 
                 # 轉換BGR到RGB
                 image_rgb = cv2.cvtColor(annotated_frame, cv2.COLOR_BGR2RGB)
@@ -583,14 +884,31 @@ class SAM2TrackerApp:
 
             except StopIteration:
                 print("視頻播放完畢")
+                # 釋放視頻寫入器
+                if video_writer is not None:
+                    video_writer.release()
+                    if self.output_path:
+                        print(f"視頻已儲存完成: {self.output_path}")
+                    else:
+                        print("視頻已儲存完成")
                 if not self.tracking_stopped:
                     tracking_window.destroy()
-                    self.root.deiconify()  # 重新顯示主窗口
+                    self.root.deiconify()  # 重新顯示主視窗
             except Exception as e:
+                # 釋放視頻寫入器
+                if video_writer is not None:
+                    video_writer.release()
+                    if self.output_path:
+                        print(f"視頻已儲存完成: {self.output_path}")
+                    else:
+                        print("視頻已儲存完成")
                 if not self.tracking_stopped:
                     print(f"追蹤過程中出錯: {e}")
                     tracking_window.destroy()
-                    self.root.deiconify()  # 重新顯示主窗口
+                    self.root.deiconify()  # 重新顯示主視窗
+
+        # 在開始追蹤前儲存配置
+        self.save_config()
 
         # 開始顯示第一幀
         update_frame()
@@ -598,8 +916,15 @@ class SAM2TrackerApp:
         # 綁定關閉事件
         def on_closing():
             self.tracking_stopped = True
+            # 釋放視頻寫入器
+            if video_writer is not None:
+                video_writer.release()
+                if self.output_path:
+                    print(f"視頻已儲存完成: {self.output_path}")
+                else:
+                    print("視頻已儲存完成")
             tracking_window.destroy()
-            self.root.deiconify()  # 重新顯示主窗口
+            self.root.deiconify()  # 重新顯示主視窗
 
         tracking_window.protocol("WM_DELETE_WINDOW", on_closing)
 

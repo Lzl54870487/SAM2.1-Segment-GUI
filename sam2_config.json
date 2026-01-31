@@ -1,0 +1,22 @@
+{
+  "classes": [
+    "Plant",
+    "Land"
+  ],
+  "color_map": {
+    "Plant": [
+      107,
+      142,
+      35
+    ],
+    "Land": [
+      128,
+      64,
+      128
+    ]
+  },
+  "alpha_map": {
+    "Plant": 0.8,
+    "Land": 0.8
+  }
+}
