@@ -102,6 +102,12 @@ class SAM2TrackerApp:
                 if 'alpha_map' in config:
                     self.alpha_map = config['alpha_map']
 
+                # 生成缺失的顏色和透明度映射
+                self.generate_color_map()
+
+                # 更新GUI界面
+                self.class_count_var.set(str(len(self.classes)))
+                self.update_class_dropdown()
                 print(f"配置已加載: {self.config_path}")
 
             except Exception as e:
@@ -109,10 +115,24 @@ class SAM2TrackerApp:
                 # 如果加載失敗，使用預設設置
                 self.classes = ["Object"]
                 self.generate_color_map()
+                # 更新GUI界面
+                self.class_count_var.set(str(len(self.classes)))
+                self.update_class_dropdown()
+                # 確保當前類別設置正確
+                if self.classes:
+                    self.class_var.set(self.classes[0])
+                    self.on_class_selected()
         else:
             # 如果配置檔案不存在，初始化預設設置
             self.classes = ["Object"]
             self.generate_color_map()
+            # 更新GUI界面
+            self.class_count_var.set(str(len(self.classes)))
+            self.update_class_dropdown()
+            # 確保當前類別設置正確
+            if self.classes:
+                self.class_var.set(self.classes[0])
+                self.on_class_selected()
 
     def setup_gui(self):
         # 主容器
@@ -529,10 +549,15 @@ class SAM2TrackerApp:
         """更新类别下拉菜单"""
         self.class_dropdown['values'] = self.classes
         if self.classes:
-            # 如果当前选择的类别仍然存在，则保持不变，否则选择第一个
+            # 確保current_class_index在有效範圍內
+            if self.current_class_index >= len(self.classes):
+                self.current_class_index = 0  # 重置為第一個類別
+
+            # 更新當前選擇的類別
             if self.current_class_index < len(self.classes):
                 self.class_var.set(self.classes[self.current_class_index])
             else:
+                # 如果索引仍然超出範圍，則選擇第一個類別
                 self.current_class_index = 0
                 self.class_var.set(self.classes[0])
         else:
@@ -899,10 +924,11 @@ class SAM2TrackerApp:
 
                 # 如果需要保存Mask視頻，生成純Mask幀並寫入視頻文件
                 if mask_video_writer is not None:
-                    # 創建黑色背景的Mask幀
-                    mask_frame = np.zeros_like(annotated_frame)
+                    # 創建指定顏色背景的Mask幀 (RGB: 107, 142, 35 -> BGR: 35, 142, 107)
+                    background_color = (35, 142, 107)  # BGR format
+                    mask_frame = np.full_like(annotated_frame, background_color)
 
-                    # 繪製分割掩碼到純黑背景上
+                    # 繪製分割掩碼到指定背景上
                     if masks is not None:
                         for i, mask in enumerate(masks):
                             if i < len(self.prompts):
@@ -924,7 +950,7 @@ class SAM2TrackerApp:
                                 mask_np = mask.data.cpu().numpy()[0]  # 轉換為numpy數組
                                 mask_uint8 = (mask_np * 255).astype(np.uint8)  # 轉換為uint8格式
 
-                                # 應用透明度混合到黑色背景
+                                # 應用透明度混合到指定背景 (前景對象使用GUI設定的顏色和透明度)
                                 mask_binary = mask_np > 0.5
                                 mask_frame[mask_binary] = (
                                     mask_frame[mask_binary] * (1 - alpha) +
