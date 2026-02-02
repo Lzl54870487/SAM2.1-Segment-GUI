@@ -18,6 +18,7 @@ class SAM2TrackerApp:
         self.drawing = False
         self.current_rect = None
         self.save_video = False  # 是否儲存視頻的標誌
+        self.save_masks_only = False  # 是否儲存僅有Mask的影片的標誌
         self.classes = ["Object"]  # 類別列表，默認為"Object"
         self.current_class_index = 0  # 當前選擇的類別索引
         self.color_map = {}  # 類別顏色映射 (存儲(R, G, B, Alpha)元組)
@@ -166,6 +167,10 @@ class SAM2TrackerApp:
         # 儲存影片開關按鈕
         self.save_video_btn = ttk.Button(button_frame, text="儲存影片: 否", command=self.toggle_save_video)
         self.save_video_btn.pack(side=tk.LEFT)
+
+        # 儲存僅有Mask影片開關按鈕
+        self.save_masks_only_btn = ttk.Button(button_frame, text="儲存Mask影片: 否", command=self.toggle_save_masks_only)
+        self.save_masks_only_btn.pack(side=tk.LEFT, padx=(0, 10))
 
         # 類別控制框架
         class_control_frame = ttk.Frame(left_control_frame)
@@ -463,6 +468,12 @@ class SAM2TrackerApp:
         status_text = "是" if self.save_video else "否"
         self.save_video_btn.config(text=f"儲存影片: {status_text}")
 
+    def toggle_save_masks_only(self):
+        """切換是否儲存僅有Mask影片的狀態"""
+        self.save_masks_only = not self.save_masks_only
+        status_text = "是" if self.save_masks_only else "否"
+        self.save_masks_only_btn.config(text=f"儲存Mask影片: {status_text}")
+
     def generate_color_map(self):
         """生成類別顏色映射"""
         # 定義一組預設的RGB顏色
@@ -724,7 +735,10 @@ class SAM2TrackerApp:
 
         # 視頻寫入器初始化
         video_writer = None
+        mask_video_writer = None
         self.output_path = None  # 存儲輸出路徑以便在其他函數中訪問
+        self.mask_output_path = None  # 存儲Mask視頻輸出路徑
+
         if self.save_video:
             import os
             output_dir = "./output"
@@ -747,6 +761,29 @@ class SAM2TrackerApp:
             video_writer = cv2.VideoWriter(self.output_path, fourcc, fps, (width, height))
 
             print(f"開始儲存視頻到: {self.output_path}")
+
+        if self.save_masks_only:
+            import os
+            output_dir = "./output"
+            os.makedirs(output_dir, exist_ok=True)
+
+            # 獲取視頻的基本信息
+            cap_info = cv2.VideoCapture(self.video_path)
+            fps = int(cap_info.get(cv2.CAP_PROP_FPS))
+            width = int(cap_info.get(cv2.CAP_PROP_FRAME_WIDTH))
+            height = int(cap_info.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            cap_info.release()
+
+            # 生成輸出Mask視頻路徑
+            import time
+            timestamp = time.strftime("%Y%m%d_%H%M%S")
+            self.mask_output_path = os.path.join(output_dir, f"mask_result_{timestamp}.mp4")
+
+            # 初始化Mask視頻寫入器
+            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+            mask_video_writer = cv2.VideoWriter(self.mask_output_path, fourcc, fps, (width, height))
+
+            print(f"開始儲存Mask視頻到: {self.mask_output_path}")
 
         # 創建新的predictor實例以確保每次都能正確開始
         overrides = self.base_overrides.copy()
@@ -780,6 +817,13 @@ class SAM2TrackerApp:
                     print(f"視頻已儲存完成: {self.output_path}")
                 else:
                     print("視頻已儲存完成")
+            # 釋放Mask視頻寫入器
+            if mask_video_writer is not None:
+                mask_video_writer.release()
+                if self.mask_output_path:
+                    print(f"Mask視頻已儲存完成: {self.mask_output_path}")
+                else:
+                    print("Mask視頻已儲存完成")
             tracking_window.destroy()
             self.root.deiconify()  # 重新顯示主視窗
 
@@ -853,6 +897,42 @@ class SAM2TrackerApp:
                 if video_writer is not None:
                     video_writer.write(annotated_frame)
 
+                # 如果需要保存Mask視頻，生成純Mask幀並寫入視頻文件
+                if mask_video_writer is not None:
+                    # 創建黑色背景的Mask幀
+                    mask_frame = np.zeros_like(annotated_frame)
+
+                    # 繪製分割掩碼到純黑背景上
+                    if masks is not None:
+                        for i, mask in enumerate(masks):
+                            if i < len(self.prompts):
+                                class_name = self.prompts[i]['class']
+
+                                # 獲取該類別的顏色
+                                color = self.color_map.get(class_name, (255, 0, 0))  # 默認為紅色 (BGR)
+                                # 直接使用RGB元組，轉換為BGR格式 (OpenCV使用BGR順序)
+                                if isinstance(color, tuple) and len(color) == 3:
+                                    # 將RGB轉換為BGR (r,g,b -> b,g,r)
+                                    color_bgr = (color[2], color[1], color[0])
+                                else:
+                                    color_bgr = (0, 0, 255)  # 默認為紅色 (BGR)
+
+                                # 獲取該類別的透明度
+                                alpha = self.alpha_map.get(class_name, 0.5)  # 默認透明度為0.5
+
+                                # 繪製分割掩碼
+                                mask_np = mask.data.cpu().numpy()[0]  # 轉換為numpy數組
+                                mask_uint8 = (mask_np * 255).astype(np.uint8)  # 轉換為uint8格式
+
+                                # 應用透明度混合到黑色背景
+                                mask_binary = mask_np > 0.5
+                                mask_frame[mask_binary] = (
+                                    mask_frame[mask_binary] * (1 - alpha) +
+                                    np.full_like(mask_frame[mask_binary], color_bgr) * alpha
+                                ).astype(np.uint8)
+
+                    mask_video_writer.write(mask_frame)
+
                 # 轉換BGR到RGB
                 image_rgb = cv2.cvtColor(annotated_frame, cv2.COLOR_BGR2RGB)
 
@@ -898,6 +978,13 @@ class SAM2TrackerApp:
                         print(f"視頻已儲存完成: {self.output_path}")
                     else:
                         print("視頻已儲存完成")
+                # 釋放Mask視頻寫入器
+                if mask_video_writer is not None:
+                    mask_video_writer.release()
+                    if self.mask_output_path:
+                        print(f"Mask視頻已儲存完成: {self.mask_output_path}")
+                    else:
+                        print("Mask視頻已儲存完成")
                 if not self.tracking_stopped:
                     tracking_window.destroy()
                     self.root.deiconify()  # 重新顯示主視窗
@@ -909,6 +996,13 @@ class SAM2TrackerApp:
                         print(f"視頻已儲存完成: {self.output_path}")
                     else:
                         print("視頻已儲存完成")
+                # 釋放Mask視頻寫入器
+                if mask_video_writer is not None:
+                    mask_video_writer.release()
+                    if self.mask_output_path:
+                        print(f"Mask視頻已儲存完成: {self.mask_output_path}")
+                    else:
+                        print("Mask視頻已儲存完成")
                 if not self.tracking_stopped:
                     print(f"追蹤過程中出錯: {e}")
                     tracking_window.destroy()
@@ -930,6 +1024,13 @@ class SAM2TrackerApp:
                     print(f"視頻已儲存完成: {self.output_path}")
                 else:
                     print("視頻已儲存完成")
+            # 釋放Mask視頻寫入器
+            if mask_video_writer is not None:
+                mask_video_writer.release()
+                if self.mask_output_path:
+                    print(f"Mask視頻已儲存完成: {self.mask_output_path}")
+                else:
+                    print("Mask視頻已儲存完成")
             tracking_window.destroy()
             self.root.deiconify()  # 重新顯示主視窗
 
